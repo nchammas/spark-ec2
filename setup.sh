@@ -1,5 +1,44 @@
 #!/bin/bash
 
+Timer() {
+    ## Set a timer to display duration ##
+    # Usage:  Timer {start|stop} [format]
+    local cmd="$1"
+    local timer_format
+    
+    if [[ -n "$2" ]]; then
+        timer_format="$2"
+    else
+        timer_format='%-Hh%-Mm%-Ss'
+    fi
+    
+    case $cmd in
+        start|Start|START)
+            # This can't be local because we need it to persist across calls.
+            _Timer_StartSecs=$(date +'%s')
+            ;;
+        stop|Stop|STOP)
+            if [[ ! $_Timer_StartSecs ]]; then
+                echo "$FUNCNAME did not record a start." >&2
+                return 1
+            fi
+            
+            local _Timer_StopSecs=$(date +'%s')
+            local DiffSecs=$(($_Timer_StopSecs-$_Timer_StartSecs))
+            local TimeLapse=$(date -u -d@"$DiffSecs" +"$timer_format")
+            
+            echo "$TimeLapse"
+            ;;
+        *)
+            echo "$FUNCNAME: Unknown arg '$cmd'" >&2
+            return 1
+            ;;
+    esac
+}
+
+
+Timer start
+
 # Make sure we are in the spark-ec2 directory
 cd /root/spark-ec2
 
@@ -42,8 +81,17 @@ fi
 echo "Setting executable permissions on scripts..."
 find . -regex "^.+.\(sh\|py\)" | xargs chmod a+x
 
+printf " >>> %6ss - Initial setup\n" "$(Timer stop '%s')"
+
+
+Timer start
+
 echo "Running setup-slave on master to mount filesystems, etc..."
 source ./setup-slave.sh
+
+printf " >>> %6ss - Run setup-slave on master\n" "$(Timer stop '%s')"
+
+Timer start
 
 echo "SSH'ing to master machine(s) to approve key(s)..."
 for master in $MASTERS; do
@@ -79,6 +127,10 @@ while [ "e$TODO" != "e" ] && [ $TRIES -lt 4 ] ; do
   fi
 done
 
+printf " >>> %6ss - Cluster SSH key approval\n" "$(Timer stop '%s')"
+
+Timer start
+
 echo "RSYNC'ing /root/spark-ec2 to other cluster nodes..."
 for node in $SLAVES $OTHER_MASTERS; do
   echo $node
@@ -87,6 +139,11 @@ for node in $SLAVES $OTHER_MASTERS; do
   sleep 0.3
 done
 wait
+
+printf " >>> %6ss - rsync spark-ec2 to rest of cluster\n" "$(Timer stop '%s')"
+
+
+Timer start
 
 # NOTE: We need to rsync spark-ec2 before we can run setup-slave.sh
 # on other cluster nodes
@@ -97,6 +154,8 @@ for node in $SLAVES $OTHER_MASTERS; do
 done
 wait
 
+printf " >>> %6ss - Run setup-slave on rest of cluster\n" "$(Timer stop '%s')"
+
 # Always include 'scala' module if it's not defined as a work around
 # for older versions of the scripts.
 if [[ ! $MODULES =~ *scala* ]]; then
@@ -105,12 +164,19 @@ fi
 
 # Install / Init module
 for module in $MODULES; do
+  Timer start
+
   echo "Initializing $module"
   if [[ -e $module/init.sh ]]; then
     source $module/init.sh
   fi
+
+  printf " >>> %6ss - ${module} init\n" "$(Timer stop '%s')"
+
   cd /root/spark-ec2  # guard against init.sh changing the cwd
 done
+
+Timer start
 
 # Deploy templates
 # TODO: Move configuring templates to a per-module ?
@@ -122,10 +188,18 @@ echo "Deploying Spark config files..."
 chmod u+x /root/spark/conf/spark-env.sh
 /root/spark-ec2/copy-dir /root/spark/conf
 
+printf " >>> %6ss - Deploy templates and config\n" "$(Timer stop '%s')"
+
 # Setup each module
 for module in $MODULES; do
   echo "Setting up $module"
+
+  Timer start
+
   source ./$module/setup.sh
   sleep 1
+
+  printf " >>> %6ss - ${module} setup\n" "$(Timer stop '%s')"
+
   cd /root/spark-ec2  # guard against setup.sh changing the cwd
 done
