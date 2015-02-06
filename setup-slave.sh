@@ -19,13 +19,15 @@ hostname $PRIVATE_DNS
 echo $PRIVATE_DNS > /etc/hostname
 HOSTNAME=$PRIVATE_DNS  # Fix the bash built-in hostname variable too
 
+echo "checking/fixing resolution of hostname"
 bash /root/spark-ec2/resolve-hostname.sh
 
-echo "Setting up slave on `hostname`..."
-
-# Work around for R3 instances without pre-formatted ext3 disks
+# Work around for R3 or I2 instances without pre-formatted ext3 disks
 instance_type=$(curl http://169.254.169.254/latest/meta-data/instance-type 2> /dev/null)
-if [[ $instance_type == r3* ]]; then
+
+echo "Setting up slave on `hostname`... of type $instance_type"
+
+if [[ $instance_type == r3* || $instance_type == i2* || $instance_type == hi1* ]]; then
   # Format & mount using ext4, which has the best performance among ext3, ext4, and xfs based
   # on our shuffle heavy benchmark
   EXT4_MOUNT_OPTS="defaults,noatime,nodiratime"
@@ -36,12 +38,20 @@ if [[ $instance_type == r3* ]]; then
   mkfs.ext4 -E lazy_itable_init=0,lazy_journal_init=0 /dev/sdb
   mount -o $EXT4_MOUNT_OPTS /dev/sdb /mnt
 
-  if [[ $instance_type == "r3.8xlarge" ]]; then
+  if [[ $instance_type == "r3.8xlarge" || $instance_type == "hi1.4xlarge" ]]; then
     mkdir /mnt2
     # To turn TRIM support on, uncomment the following line.
     #echo '/dev/sdc /mnt2  ext4  defaults,noatime,nodiratime,discard 0 0' >> /etc/fstab
-    mkfs.ext4 -E lazy_itable_init=0,lazy_journal_init=0 /dev/sdc
-    mount -o $EXT4_MOUNT_OPTS /dev/sdc /mnt2
+    if [[ $instance_type == "r3.8xlarge" ]]; then
+      mkfs.ext4 -E lazy_itable_init=0,lazy_journal_init=0 /dev/sdc      
+      mount -o $EXT4_MOUNT_OPTS /dev/sdc /mnt2
+    fi
+    # To turn TRIM support on, uncomment the following line.
+    #echo '/dev/sdf /mnt2  ext4  defaults,noatime,nodiratime,discard 0 0' >> /etc/fstab
+    if [[ $instance_type == "hi1.4xlarge" ]]; then
+      mkfs.ext4 -E lazy_itable_init=0,lazy_journal_init=0 /dev/sdf      
+      mount -o $EXT4_MOUNT_OPTS /dev/sdf /mnt2
+    fi    
   fi
 fi
 
